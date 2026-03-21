@@ -6,10 +6,10 @@
 
 int main(int argc, char *argv[]) {
     char buf[512];
-    char *newargv[MAXARG];
+    char *base_argv[MAXARG];
 
     for (int i = 1; i < argc; i++) {
-        newargv[i-1] = argv[i];
+        base_argv[i - 1] = argv[i];
     }
 
     int base = argc - 1;
@@ -20,31 +20,51 @@ int main(int argc, char *argv[]) {
         if (c == '\n') {
             buf[idx] = 0;
 
-            newargv[base] = buf;
-            newargv[base+1] = 0;
+            char *args[MAXARG];
+
+            // copy base args
+            for (int i = 0; i < base; i++) {
+                args[i] = base_argv[i];
+            }
+
+            if (idx == 0) {
+                // dòng rỗng
+                args[base] = 0;
+            } else {
+                args[base] = buf;
+                args[base + 1] = 0;
+            }
 
             if (fork() == 0) {
-                exec(newargv[0], newargv);
+                exec(args[0], args);
                 exit(0);
             }
             wait(0);
+
             idx = 0;
-        }
-        else {
+        } else {
             buf[idx++] = c;
         }
     }
 
+    // xử lý dòng cuối
     if (idx > 0) {
         buf[idx] = 0;
-        newargv[base] = buf;
-        newargv[base+1] = 0;
+
+        char *args[MAXARG];
+        for (int i = 0; i < base; i++) {
+            args[i] = base_argv[i];
+        }
+
+        args[base] = buf;
+        args[base + 1] = 0;
+
         if (fork() == 0) {
-            exec(newargv[0], newargv);
+            exec(args[0], args);
             exit(0);
         }
         wait(0);
     }
-    
+
     exit(0);
 }
