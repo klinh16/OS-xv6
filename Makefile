@@ -197,6 +197,8 @@ UPROGS=\
 	$U/_xargs\
 	$U/_trace\
 	$U/_test_procinfo\
+  $U/_tree\
+
 
 
 ifeq ($(LAB),syscall)
