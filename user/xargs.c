@@ -22,13 +22,11 @@ int main(int argc, char *argv[]) {
 
             char *args[MAXARG];
 
-            // copy base args
             for (int i = 0; i < base; i++) {
                 args[i] = base_argv[i];
             }
 
             if (idx == 0) {
-                // dòng rỗng
                 args[base] = 0;
             } else {
                 args[base] = buf;
@@ -47,7 +45,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // xử lý dòng cuối
     if (idx > 0) {
         buf[idx] = 0;
 
