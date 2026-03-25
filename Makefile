@@ -197,7 +197,7 @@ UPROGS=\
 	$U/_xargs\
 	$U/_trace\
 	$U/_test_procinfo\
-  $U/_tree\
+    $U/_tree\
 
 
 
