@@ -6,6 +6,8 @@
 #include "spinlock.h"
 #include "proc.h"
 
+extern struct proc proc[NPROC];
+
 uint64
 sys_exit(void)
 {
@@ -90,4 +92,47 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64
+sys_trace(void)
+{
+    int mask;
+    argint(0, &mask);
+
+    struct proc *p = myproc();
+    p->trace_mask = mask;
+
+    return 0;
+}
+
+uint64
+sys_procinfo(void)
+{
+    int pid;
+    uint64 addr;
+
+    argint(0, &pid);       // lấy pid
+    argaddr(1, &addr);     // lấy pointer user
+
+    struct proc *p;
+    struct procinfo info;
+
+    for(p = proc; p < &proc[NPROC]; p++){
+        if(p->pid == pid){
+            info.pid = p->pid;
+            info.ppid = p->parent ? p->parent->pid : 0;
+            info.state = p->state;
+            info.sz = p->sz;
+            safestrcpy(info.name, p->name, sizeof(info.name));
+
+            //  copy từ kernel → user
+            if(copyout(myproc()->pagetable, addr, (char*)&info, sizeof(info)) < 0)
+                return -1;
+
+            return 0;
+        }
+    }
+
+    return -1;
 }
