@@ -1,0 +1,456 @@
+diff --git a/Makefile b/Makefile
+index 74e454f..2d1efeb 100644
+--- a/Makefile
++++ b/Makefile
+@@ -194,7 +194,10 @@ UPROGS=\
+ 	$U/_grind\
+ 	$U/_wc\
+ 	$U/_zombie\
+-
++	$U/_xargs\
++	$U/_trace\
++	$U/_test_procinfo\
++    $U/_tree\
+ 
+ 
+ 
+diff --git a/kernel/proc.c b/kernel/proc.c
+index 130d9ce..c9f734d 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -299,6 +299,8 @@ fork(void)
+   // copy saved user registers.
+   *(np->trapframe) = *(p->trapframe);
+ 
++   np->trace_mask = p->trace_mask;
++
+   // Cause fork to return 0 in the child.
+   np->trapframe->a0 = 0;
+ 
+diff --git a/kernel/proc.h b/kernel/proc.h
+index d021857..eba268e 100644
+--- a/kernel/proc.h
++++ b/kernel/proc.h
+@@ -81,6 +81,14 @@ struct trapframe {
+ 
+ enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+ 
++struct procinfo {
++  int pid;
++  int ppid;
++  int state;
++  uint64 sz;
++  char name[16];
++};
++
+ // Per-process state
+ struct proc {
+   struct spinlock lock;
+@@ -91,6 +99,7 @@ struct proc {
+   int killed;                  // If non-zero, have been killed
+   int xstate;                  // Exit status to be returned to parent's wait
+   int pid;                     // Process ID
++  int trace_mask;
+ 
+   // wait_lock must be held when using this:
+   struct proc *parent;         // Parent process
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index ed65409..4ea927a 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -101,6 +101,8 @@ extern uint64 sys_unlink(void);
+ extern uint64 sys_link(void);
+ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
++extern uint64 sys_trace(void);
++extern uint64 sys_procinfo(void);
+ 
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+@@ -126,6 +128,33 @@ static uint64 (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_trace]   sys_trace,
++[SYS_procinfo] sys_procinfo,
++};
++
++static char *syscall_names[] = {
++  [SYS_fork]   "fork",
++  [SYS_exit]   "exit",
++  [SYS_wait]   "wait",
++  [SYS_pipe]   "pipe",
++  [SYS_read]   "read",
++  [SYS_kill]   "kill",
++  [SYS_exec]   "exec",
++  [SYS_fstat]  "fstat",
++  [SYS_chdir]  "chdir",
++  [SYS_dup]    "dup",
++  [SYS_getpid] "getpid",
++  [SYS_sbrk]   "sbrk",
++  [SYS_sleep]  "sleep",
++  [SYS_uptime] "uptime",
++  [SYS_open]   "open",
++  [SYS_write]  "write",
++  [SYS_mknod]  "mknod",
++  [SYS_unlink] "unlink",
++  [SYS_link]   "link",
++  [SYS_mkdir]  "mkdir",
++  [SYS_close]  "close",
++  [SYS_trace]  "trace",
+ };
+ 
+ void
+@@ -136,9 +165,17 @@ syscall(void)
+ 
+   num = p->trapframe->a7;
+   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+-    // Use num to lookup the system call function for num, call it,
+-    // and store its return value in p->trapframe->a0
+-    p->trapframe->a0 = syscalls[num]();
++    int retval = syscalls[num]();   // gß╗ìi syscall
++    p->trapframe->a0 = retval;      // l╞░u kß║┐t quß║ú
++
++    // TRACING
++    if(p->trace_mask & (1 << num)){
++      printf("%d: syscall %s -> %d\n",
++             p->pid,
++             syscall_names[num],
++             retval);
++    }
++
+   } else {
+     printf("%d %s: unknown sys call %d\n",
+             p->pid, p->name, num);
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index bc5f356..b4a85dd 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -20,3 +20,5 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_trace 22
++#define SYS_procinfo 23
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index 3b4d5bd..fd80834 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -6,6 +6,8 @@
+ #include "spinlock.h"
+ #include "proc.h"
+ 
++extern struct proc proc[NPROC];
++
+ uint64
+ sys_exit(void)
+ {
+@@ -91,3 +93,46 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++
++uint64
++sys_trace(void)
++{
++    int mask;
++    argint(0, &mask);
++
++    struct proc *p = myproc();
++    p->trace_mask = mask;
++
++    return 0;
++}
++
++uint64
++sys_procinfo(void)
++{
++    int pid;
++    uint64 addr;
++
++    argint(0, &pid);       // lß║Ñy pid
++    argaddr(1, &addr);     // lß║Ñy pointer user
++
++    struct proc *p;
++    struct procinfo info;
++
++    for(p = proc; p < &proc[NPROC]; p++){
++        if(p->pid == pid){
++            info.pid = p->pid;
++            info.ppid = p->parent ? p->parent->pid : 0;
++            info.state = p->state;
++            info.sz = p->sz;
++            safestrcpy(info.name, p->name, sizeof(info.name));
++
++            //  copy tß╗½ kernel ΓåÆ user
++            if(copyout(myproc()->pagetable, addr, (char*)&info, sizeof(info)) < 0)
++                return -1;
++
++            return 0;
++        }
++    }
++
++    return -1;
++}
+diff --git a/user/test_procinfo.c b/user/test_procinfo.c
+new file mode 100644
+index 0000000..c6856ac
+--- /dev/null
++++ b/user/test_procinfo.c
+@@ -0,0 +1,19 @@
++#include "kernel/types.h"
++#include "user/user.h"
++
++int
++main()
++{
++    struct procinfo info;
++
++    if(procinfo(getpid(), &info) == 0){
++        printf("Process: %s\n", info.name);
++        printf("PID: %d, PPID: %d\n", info.pid, info.ppid);
++        printf("State: %d\n", info.state);
++        printf("Memory: %ld bytes\n", info.sz);
++    } else {
++        printf("Error\n");
++    }
++
++    exit(0);
++}
+diff --git a/user/trace.c b/user/trace.c
+new file mode 100644
+index 0000000..62a0da2
+--- /dev/null
++++ b/user/trace.c
+@@ -0,0 +1,28 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++
++int
++main(int argc, char *argv[])
++{
++  int i;
++  char *nargv[32];
++
++  if(argc < 3){
++    fprintf(2, "usage: trace mask command\n");
++    exit(1);
++  }
++
++  int mask = atoi(argv[1]);
++  trace(mask);
++
++  for(i = 2; i < argc && i < 32; i++){
++    nargv[i-2] = argv[i];
++  }
++  nargv[i-2] = 0;
++
++  exec(nargv[0], nargv);
++
++  fprintf(2, "exec failed\n");
++  exit(1);
++}
+diff --git a/user/tree.c b/user/tree.c
+new file mode 100644
+index 0000000..38b6a34
+--- /dev/null
++++ b/user/tree.c
+@@ -0,0 +1,88 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++#include "kernel/fs.h"
++
++void print_indent(int depth){
++  for(int i = 0; i < depth; i++)
++    printf("  ");
++}
++
++void tree(char *path, int depth){
++  int fd;
++  struct stat st;
++  struct dirent de;
++  char buf[512], *p;
++
++  if((fd = open(path, 0)) < 0){
++    printf("tree: cannot open %s\n", path);
++    return;
++  }
++
++  if(fstat(fd, &st) < 0){
++    printf("tree: cannot stat %s\n", path);
++    close(fd);
++    return;
++  }
++
++  // Print current directory/file name only
++  char *name = path;
++  for(int i = strlen(path)-1; i >= 0; i--){
++    if(path[i] == '/'){
++      name = path + i + 1;
++      break;
++    }
++  }
++
++  print_indent(depth);
++  printf("%s", name);
++  if(st.type == T_DIR)
++    printf("/\n");
++  else{
++    printf("\n");
++    close(fd);
++    return;
++  }
++
++  // Prepare buffer
++  if(strlen(path) + 1 + DIRSIZ + 1 > sizeof(buf)){
++    printf("tree: path too long\n");
++    close(fd);
++    return;
++  }
++
++  strcpy(buf, path);
++  p = buf + strlen(buf);
++  *p++ = '/';
++
++  while(read(fd, &de, sizeof(de)) == sizeof(de)){
++    if(de.inum == 0)
++      continue;
++
++    char child[DIRSIZ+1];
++    memmove(child, de.name, DIRSIZ);
++    child[DIRSIZ] = 0;
++
++    if(strcmp(child, ".") == 0 || strcmp(child, "..") == 0)
++      continue;
++
++    memmove(p, child, strlen(child)+1);
++
++    if(stat(buf, &st) < 0){
++      printf("tree: cannot stat %s\n", buf);
++      continue;
++    }
++
++    tree(buf, depth + 1);
++  }
++
++  close(fd);
++}
++
++int main(int argc, char *argv[]){
++  if(argc == 1)
++    tree(".", 0);
++  else
++    tree(argv[1], 0);
++  exit(0);
++}
+diff --git a/user/user.h b/user/user.h
+index f16fe27..e982bac 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -22,6 +22,7 @@ int getpid(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
++int trace(int);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+@@ -41,3 +42,12 @@ void *memcpy(void *, const void *, uint);
+ // umalloc.c
+ void* malloc(uint);
+ void free(void*);
++
++struct procinfo {
++  int pid;
++  int ppid;
++  int state;
++  uint64 sz;
++  char name[16];
++};
++int procinfo(int, struct procinfo *);
+diff --git a/user/usys.pl b/user/usys.pl
+index 01e426e..36087ff 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -36,3 +36,5 @@ entry("getpid");
+ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
++entry("trace");
++entry("procinfo");
+diff --git a/user/xargs.c b/user/xargs.c
+new file mode 100644
+index 0000000..05f0312
+--- /dev/null
++++ b/user/xargs.c
+@@ -0,0 +1,67 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++
++#define MAXARG 32
++
++int main(int argc, char *argv[]) {
++    char buf[512];
++    char *base_argv[MAXARG];
++
++    for (int i = 1; i < argc; i++) {
++        base_argv[i - 1] = argv[i];
++    }
++
++    int base = argc - 1;
++    int idx = 0;
++    char c;
++
++    while (read(0, &c, 1) > 0) {
++        if (c == '\n') {
++            buf[idx] = 0;
++
++            char *args[MAXARG];
++
++            for (int i = 0; i < base; i++) {
++                args[i] = base_argv[i];
++            }
++
++            if (idx == 0) {
++                args[base] = 0;
++            } else {
++                args[base] = buf;
++                args[base + 1] = 0;
++            }
++
++            if (fork() == 0) {
++                exec(args[0], args);
++                exit(0);
++            }
++            wait(0);
++
++            idx = 0;
++        } else {
++            buf[idx++] = c;
++        }
++    }
++
++    if (idx > 0) {
++        buf[idx] = 0;
++
++        char *args[MAXARG];
++        for (int i = 0; i < base; i++) {
++            args[i] = base_argv[i];
++        }
++
++        args[base] = buf;
++        args[base + 1] = 0;
++
++        if (fork() == 0) {
++            exec(args[0], args);
++            exit(0);
++        }
++        wait(0);
++    }
++
++    exit(0);
++}
+\ No newline at end of file

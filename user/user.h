@@ -51,3 +51,4 @@ struct procinfo {
   char name[16];
 };
 int procinfo(int, struct procinfo *);
+int ugetpid(void);

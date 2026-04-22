@@ -4,16 +4,11 @@
 int
 main()
 {
-    struct procinfo info;
+  int pid1 = getpid();   // normal syscall
+  int pid2 = ugetpid();  // fast version (no syscall)
 
-    if(procinfo(getpid(), &info) == 0){
-        printf("Process: %s\n", info.name);
-        printf("PID: %d, PPID: %d\n", info.pid, info.ppid);
-        printf("State: %d\n", info.state);
-        printf("Memory: %ld bytes\n", info.sz);
-    } else {
-        printf("Error\n");
-    }
+  printf("getpid(): %d\n", pid1);
+  printf("ugetpid(): %d\n", pid2);
 
-    exit(0);
+  exit(0);
 }
